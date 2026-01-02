@@ -43,6 +43,15 @@ This approach prevents pattern detection and minimizes market impact for institu
 
 **Documentation**: See [docs/RandomSwarmAlgo.md](docs/RandomSwarmAlgo.md) for detailed usage.
 
+## Compatibility
+
+*   **Python**: 3.13+ (leveraging latest `asyncio` and typing features)
+*   **Exchanges**: 
+    - ✅ **Binance** (Spot & Futures)
+    - ✅ **Bybit** (Spot & Futures)
+    - 🚧 **OKX** (Planned)
+*   **OS**: Linux (Optimized for low-latency kernels), macOS, Windows.
+
 ## Installation
 
 This project uses `uv` for dependency management.
@@ -189,6 +198,10 @@ uv run mypy src --strict
 - Risk management (limit & market orders)
 - OMS lifecycle (success & rejection paths)
 - Market order safety checks
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 - Random Swarm planning and validation
 - Quantity splitting algorithms
 - Constraint enforcement
