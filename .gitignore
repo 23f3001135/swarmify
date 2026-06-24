@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtualenv / tooling
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local state
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+
+# Session journal (local crash-recovery notes, not part of the package)
+SESSION_LOG.md
