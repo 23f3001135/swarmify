@@ -1,55 +1,39 @@
-"""
-Tests for RandomSwarmAlgo production features:
-- Weighted average entry price calculation
-- Partial fill detection and validation
-- Stop-loss order generation
-- Execution summary
-"""
+"""Fill tracking, partial-fill handling and stop generation for RandomSwarmAlgo."""
+
+from decimal import Decimal
 
 import pytest
-from decimal import Decimal
+
 from swarmify.algos.random_swarm import RandomSwarmAlgo
 from swarmify.algos.swarm_planner import SwarmConfig
 from swarmify.core.models import AlgoOrder
-from swarmify.core.types import OrderSide, OrderStatus
+from swarmify.core.types import OrderSide
 
 
 @pytest.fixture
 def swarm_config():
-    """Standard swarm configuration for testing."""
-    return SwarmConfig(
-        min_child_orders=3,
-        max_child_orders=3,  # Fixed for predictable testing
-        min_delay_ms=0,  # No delays for faster tests
-        max_delay_ms=0,
-    )
+    # Pin the order count so the plan is deterministic, and drop delays so the
+    # async iteration does not actually sleep.
+    return SwarmConfig(min_child_orders=3, max_child_orders=3, max_delay_ms=0)
 
 
 @pytest.fixture
 def buy_algo_order():
-    """Create a test AlgoOrder for buying."""
     return AlgoOrder(
         id="test-swarm-001",
         symbol="BTC/USDT",
         side=OrderSide.BUY,
         total_amount=Decimal("1.0"),
-        algo_type="random_swarm",
-        timestamp=1234567890000,
-        last_update_timestamp=1234567890000,
     )
 
 
 @pytest.fixture
 def sell_algo_order():
-    """Create a test AlgoOrder for selling."""
     return AlgoOrder(
         id="test-swarm-002",
         symbol="ETH/USDT",
         side=OrderSide.SELL,
         total_amount=Decimal("10.0"),
-        algo_type="random_swarm",
-        timestamp=1234567890000,
-        last_update_timestamp=1234567890000,
     )
 
 
