@@ -44,3 +44,27 @@ async def test_slices_sum_to_parent():
 def test_non_positive_slice_size_rejected():
     with pytest.raises(ValueError):
         IcebergAlgo(_parent("1.0"), slice_size=Decimal("0"))
+
+
+@pytest.mark.asyncio
+async def test_slice_larger_than_parent_yields_one_child():
+    algo = IcebergAlgo(_parent("0.4"), slice_size=Decimal("1.0"))
+    sizes = await _slices(algo)
+    assert sizes == [Decimal("0.4")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "total,slice_size",
+    [
+        ("10", "0.1"),
+        ("3.333", "0.7"),
+        ("0.001", "0.001"),
+        ("99.9", "10"),
+    ],
+)
+async def test_slices_always_sum_to_parent(total, slice_size):
+    algo = IcebergAlgo(_parent(total), slice_size=Decimal(slice_size))
+    sizes = await _slices(algo)
+    assert sum(sizes) == Decimal(total)
+    assert all(s > 0 for s in sizes)

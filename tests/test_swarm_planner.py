@@ -1,3 +1,4 @@
+import random
 from decimal import Decimal
 
 import pytest
@@ -95,3 +96,94 @@ def test_invalid_config_rejected():
         SwarmConfig(min_child_orders=5, max_child_orders=2)
     with pytest.raises(ValueError):
         SwarmConfig(min_delay_ms=500, max_delay_ms=100)
+
+
+# --- invariants that must hold for every plan, swept across many RNG draws ---
+
+_CASES = [
+    # (total, price, config)
+    (
+        Decimal("1.0"),
+        Decimal("45000"),
+        SwarmConfig(min_child_orders=2, max_child_orders=10),
+    ),
+    (
+        Decimal("3.7"),
+        Decimal("123.45"),
+        SwarmConfig(min_child_orders=1, max_child_orders=9),
+    ),
+    (
+        Decimal("0.05"),
+        Decimal("60000"),
+        SwarmConfig(min_child_orders=2, max_child_orders=8),
+    ),
+    (Decimal("20"), Decimal("1"), SwarmConfig(min_child_orders=3, max_child_orders=12)),
+    (
+        Decimal("100"),
+        Decimal("0.5"),
+        SwarmConfig(
+            min_child_orders=4,
+            max_child_orders=15,
+            min_notional_usd=Decimal("10"),
+            min_quantity=Decimal("0.5"),
+        ),
+    ),
+    (
+        Decimal("2.5"),
+        Decimal("9999.99"),
+        SwarmConfig(min_child_orders=5, max_child_orders=5),
+    ),
+]
+
+
+def _min_order(price: Decimal, config: SwarmConfig) -> Decimal:
+    return max(config.min_quantity, config.min_notional_usd / price)
+
+
+@pytest.mark.parametrize("total,price,config", _CASES)
+def test_invariants_hold_across_many_seeds(total, price, config):
+    min_order = _min_order(price, config)
+    feasible = int(total / min_order)
+
+    for seed in range(250):
+        plan = SwarmPlanner.create_plan(total, price, config, rng=random.Random(seed))
+
+        # Structural shape.
+        assert plan.num_orders == len(plan.quantities)
+        assert len(plan.delays_ms) == plan.num_orders - 1
+        assert 1 <= plan.num_orders <= config.max_child_orders
+        assert plan.num_orders <= feasible
+
+        # The whole parent is worked, to the last unit.
+        assert plan.total_quantity() == total
+
+        # No child the venue would reject, and no negative clip.
+        assert all(qty >= min_order for qty in plan.quantities)
+
+        # Delays stay inside the configured window.
+        assert all(
+            config.min_delay_ms <= d <= config.max_delay_ms for d in plan.delays_ms
+        )
+
+
+@pytest.mark.parametrize("total,price,config", _CASES)
+def test_count_honours_lower_bound_when_feasible(total, price, config):
+    feasible = int(total / _min_order(price, config))
+    for seed in range(100):
+        plan = SwarmPlanner.create_plan(total, price, config, rng=random.Random(seed))
+        if feasible >= config.min_child_orders:
+            assert plan.num_orders >= config.min_child_orders
+        else:
+            # Constraints do not allow the requested floor; clamp to feasible.
+            assert plan.num_orders == feasible
+
+
+def test_explicit_rng_makes_planning_reproducible():
+    config = SwarmConfig(min_child_orders=2, max_child_orders=9)
+    a = SwarmPlanner.create_plan(
+        Decimal("4"), Decimal("250"), config, rng=random.Random(7)
+    )
+    b = SwarmPlanner.create_plan(
+        Decimal("4"), Decimal("250"), config, rng=random.Random(7)
+    )
+    assert a == b

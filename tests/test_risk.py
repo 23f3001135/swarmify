@@ -58,3 +58,31 @@ def test_market_order_uses_reference_price():
 def test_no_limits_approves_everything():
     risk = RiskManager()
     assert risk.check(_order(amount="1000000", price="100000")).approved
+
+
+def test_notional_exactly_at_limit_is_allowed():
+    risk = RiskManager(RiskLimits(max_order_notional_usd=Decimal("100")))
+    assert risk.check(_order(amount="1", price="100")).approved
+
+
+def test_quantity_exactly_at_limit_is_allowed():
+    risk = RiskManager(RiskLimits(max_order_quantity=Decimal("1")))
+    assert risk.check(_order(amount="1")).approved
+
+
+def test_stop_market_without_price_is_rejected():
+    risk = RiskManager()
+    order = _order(order_type=OrderType.STOP_MARKET, price=None)
+    assert not risk.check(order).approved
+
+
+def test_stop_market_priced_is_disabled_when_configured():
+    risk = RiskManager(RiskLimits(reject_market_without_price=False))
+    order = _order(order_type=OrderType.STOP_MARKET, price=None)
+    assert risk.check(order).approved
+
+
+def test_stop_limit_uses_its_own_price_for_notional():
+    risk = RiskManager(RiskLimits(max_order_notional_usd=Decimal("50")))
+    order = _order(order_type=OrderType.STOP_LIMIT, amount="1", price="100")
+    assert not risk.check(order).approved

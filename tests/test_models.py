@@ -60,3 +60,30 @@ def test_algo_order_rejects_unknown_field():
             total_amount=Decimal("1"),
             algo_type="random_swarm",
         )
+
+
+@pytest.mark.parametrize("amount", ["0", "-1", "-0.0001"])
+def test_order_rejects_non_positive_amount(amount):
+    with pytest.raises(ValidationError):
+        _order(amount=Decimal(amount))
+
+
+@pytest.mark.parametrize("price", ["0", "-100"])
+def test_order_rejects_non_positive_price(price):
+    with pytest.raises(ValidationError):
+        _order(price=Decimal(price))
+
+
+def test_order_allows_no_price():
+    assert _order(price=None).price is None
+
+
+@pytest.mark.parametrize("total", ["0", "-5"])
+def test_algo_order_rejects_non_positive_total(total):
+    with pytest.raises(ValidationError):
+        AlgoOrder(
+            id="a1",
+            symbol="BTC/USDT",
+            side=OrderSide.BUY,
+            total_amount=Decimal(total),
+        )

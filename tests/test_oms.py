@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 
+from conftest import FakeExchange
 from swarmify.core.models import Order
 from swarmify.core.types import OrderSide, OrderStatus, OrderType
 from swarmify.execution.oms import OMS
@@ -65,14 +66,55 @@ async def test_exchange_error_propagates_and_is_counted(fake_exchange):
     assert oms.metrics.counters["orders.errors"] == 1
 
 
-async def test_cancel_marks_order_canceled(fake_exchange):
-    oms = OMS(fake_exchange)
+async def test_cancel_marks_resting_order_canceled():
+    exchange = FakeExchange(fill=False)
+    oms = OMS(exchange)
     placed = await oms.submit_order(_order())
+    assert placed.status == OrderStatus.OPEN
 
     canceled = await oms.cancel_order(placed)
 
     assert canceled.status == OrderStatus.CANCELED
-    assert fake_exchange.canceled == [("BTC/USDT", "ex-1")]
+    assert exchange.canceled == [("BTC/USDT", "ex-1")]
+
+
+async def test_cancel_is_a_noop_on_a_terminal_order(fake_exchange):
+    oms = OMS(fake_exchange)
+    placed = await oms.submit_order(_order())  # FakeExchange fills immediately
+    assert placed.status == OrderStatus.FILLED
+
+    result = await oms.cancel_order(placed)
+
+    assert result.status == OrderStatus.FILLED
+    assert fake_exchange.canceled == []
+
+
+async def test_retry_after_transient_failure_resubmits(fake_exchange):
+    # A failed first attempt must not lock the client_order_id out of a retry.
+    fake_exchange.fail_next = True
+    oms = OMS(fake_exchange)
+
+    with pytest.raises(RuntimeError):
+        await oms.submit_order(_order(client_order_id="retry-me"))
+
+    placed = await oms.submit_order(_order(client_order_id="retry-me"))
+
+    assert placed.status == OrderStatus.FILLED
+    assert len(fake_exchange.created) == 2
+    assert oms.metrics.counters["orders.errors"] == 1
+
+
+async def test_rejected_order_can_be_resubmitted_after_limits_change(fake_exchange):
+    risk = RiskManager(RiskLimits(max_order_quantity=Decimal("0.5")))
+    oms = OMS(fake_exchange, risk=risk)
+
+    rejected = await oms.submit_order(_order(client_order_id="r1", amount="1"))
+    assert rejected.status == OrderStatus.REJECTED
+
+    # Operator widens the limit and resubmits the same id; it must go through.
+    oms.risk = RiskManager(RiskLimits(max_order_quantity=Decimal("10")))
+    placed = await oms.submit_order(_order(client_order_id="r1", amount="1"))
+    assert placed.status == OrderStatus.FILLED
 
 
 async def test_persistence_records_parent_child_links(fake_exchange):

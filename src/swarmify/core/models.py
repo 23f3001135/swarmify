@@ -7,7 +7,7 @@ never hand floats to one another, so rounding is explicit and reproducible.
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..utils.timeutil import now_ms
 from .types import OrderSide, OrderStatus, OrderType, TimeInForce
@@ -39,6 +39,20 @@ class Order(BaseModel):
 
     timestamp: int = Field(default_factory=now_ms)
     last_update_timestamp: int = Field(default_factory=now_ms)
+
+    @field_validator("amount")
+    @classmethod
+    def _amount_positive(cls, value: Decimal) -> Decimal:
+        if value <= 0:
+            raise ValueError("amount must be > 0")
+        return value
+
+    @field_validator("price")
+    @classmethod
+    def _price_positive(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value <= 0:
+            raise ValueError("price must be > 0")
+        return value
 
     @model_validator(mode="after")
     def _default_remaining(self) -> "Order":
@@ -73,6 +87,13 @@ class AlgoOrder(BaseModel):
 
     timestamp: int = Field(default_factory=now_ms)
     last_update_timestamp: int = Field(default_factory=now_ms)
+
+    @field_validator("total_amount")
+    @classmethod
+    def _total_positive(cls, value: Decimal) -> Decimal:
+        if value <= 0:
+            raise ValueError("total_amount must be > 0")
+        return value
 
     @property
     def remaining_amount(self) -> Decimal:

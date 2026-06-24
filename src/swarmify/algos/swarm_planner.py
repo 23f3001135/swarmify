@@ -8,7 +8,7 @@ caller inspect or veto a plan before any order leaves the process.
 
 import random
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 
 from pydantic import BaseModel, model_validator
 
@@ -79,9 +79,14 @@ class SwarmPlanner:
         rng = rng or random.Random(config.seed)
 
         # Smallest child the venue will accept: the larger of the size floor and
-        # the notional floor expressed as a quantity at the reference price.
+        # the notional floor expressed as a quantity at the reference price. The
+        # notional division can be non-terminating, so round it up onto the
+        # quantisation step — that keeps it a valid floor and, being finite,
+        # makes the arithmetic below exact rather than precision-limited.
         notional_floor = config.min_notional_usd / estimated_price
-        min_order = max(config.min_quantity, notional_floor)
+        min_order = max(config.min_quantity, notional_floor).quantize(
+            _STEP, rounding=ROUND_CEILING
+        )
 
         feasible = int(total_amount / min_order)
         if feasible < 1:
@@ -108,8 +113,9 @@ class SwarmPlanner:
 
         Every child starts at ``min_order``; the surplus is partitioned at
         ``n - 1`` random cut points so the split is non-uniform and hard to
-        fingerprint. The final child absorbs the rounding residual, which keeps
-        the sum exact and never drops it below the floor.
+        fingerprint. The final child is set to ``total`` minus everything already
+        allocated, which keeps the sum exact and never drops it below the floor
+        (the per-child surplus is clamped so the allocation can never overrun).
         """
         if n == 1:
             return [total]
@@ -131,5 +137,5 @@ class SwarmPlanner:
             extra = min(extra, surplus - allocated)
             allocated += extra
             quantities.append(min_order + extra)
-        quantities.append(min_order + (surplus - allocated))
+        quantities.append(total - sum(quantities, Decimal("0")))
         return quantities

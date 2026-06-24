@@ -189,7 +189,9 @@ class RandomSwarmAlgo(ExecutionAlgo):
             "fill_percent": f"{fill_percent:.2f}%",
             "num_orders_planned": self.plan.num_orders,
             "num_fills": len(self._fills),
-            "weighted_avg_price": str(weighted_avg) if weighted_avg else None,
+            "weighted_avg_price": (
+                str(weighted_avg) if weighted_avg is not None else None
+            ),
             "total_cost": str(self._total_cost),
             "min_fill_threshold": f"{self.min_fill_percent}%",
             "meets_threshold": meets_threshold,
