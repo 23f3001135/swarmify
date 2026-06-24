@@ -1,12 +1,20 @@
-"""Swarmify Execution Engine - High-performance async algorithmic trading library."""
+"""Swarmify: an async algorithmic execution engine for crypto venues."""
 
-from .client import SwarmClient
-from .core.models import Order, AlgoOrder, Trade, Ticker, Balance
-from .core.types import OrderSide, OrderType, OrderStatus, TimeInForce
+from .algos.base import ExecutionAlgo
+from .algos.iceberg import IcebergAlgo
 from .algos.random_swarm import RandomSwarmAlgo
-from .algos.swarm_planner import SwarmConfig
+from .algos.swarm_planner import SwarmConfig, SwarmPlan, SwarmPlanner
+from .client import SwarmClient
+from .core.models import AlgoOrder, Balance, Order, Ticker, Trade
+from .core.types import OrderSide, OrderStatus, OrderType, TimeInForce
+from .exchange.base import BaseExchange
+from .exchange.ccxt_exchange import CcxtExchange
+from .execution.oms import OMS
+from .execution.risk import RiskDecision, RiskLimits, RiskManager
+from .persistence.store import OrderStore
+from .utils.metrics import Metrics
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "SwarmClient",
@@ -19,6 +27,18 @@ __all__ = [
     "OrderType",
     "OrderStatus",
     "TimeInForce",
+    "ExecutionAlgo",
     "RandomSwarmAlgo",
+    "IcebergAlgo",
     "SwarmConfig",
+    "SwarmPlan",
+    "SwarmPlanner",
+    "BaseExchange",
+    "CcxtExchange",
+    "OMS",
+    "RiskManager",
+    "RiskLimits",
+    "RiskDecision",
+    "OrderStore",
+    "Metrics",
 ]

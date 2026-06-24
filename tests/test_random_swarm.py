@@ -1,55 +1,39 @@
-"""
-Tests for RandomSwarmAlgo production features:
-- Weighted average entry price calculation
-- Partial fill detection and validation
-- Stop-loss order generation
-- Execution summary
-"""
+"""Fill tracking, partial-fill handling and stop generation for RandomSwarmAlgo."""
+
+from decimal import Decimal
 
 import pytest
-from decimal import Decimal
+
 from swarmify.algos.random_swarm import RandomSwarmAlgo
 from swarmify.algos.swarm_planner import SwarmConfig
 from swarmify.core.models import AlgoOrder
-from swarmify.core.types import OrderSide, OrderStatus
+from swarmify.core.types import OrderSide
 
 
 @pytest.fixture
 def swarm_config():
-    """Standard swarm configuration for testing."""
-    return SwarmConfig(
-        min_child_orders=3,
-        max_child_orders=3,  # Fixed for predictable testing
-        min_delay_ms=0,  # No delays for faster tests
-        max_delay_ms=0,
-    )
+    # Pin the order count so the plan is deterministic, and drop delays so the
+    # async iteration does not actually sleep.
+    return SwarmConfig(min_child_orders=3, max_child_orders=3, max_delay_ms=0)
 
 
 @pytest.fixture
 def buy_algo_order():
-    """Create a test AlgoOrder for buying."""
     return AlgoOrder(
         id="test-swarm-001",
         symbol="BTC/USDT",
         side=OrderSide.BUY,
         total_amount=Decimal("1.0"),
-        algo_type="random_swarm",
-        timestamp=1234567890000,
-        last_update_timestamp=1234567890000,
     )
 
 
 @pytest.fixture
 def sell_algo_order():
-    """Create a test AlgoOrder for selling."""
     return AlgoOrder(
         id="test-swarm-002",
         symbol="ETH/USDT",
         side=OrderSide.SELL,
         total_amount=Decimal("10.0"),
-        algo_type="random_swarm",
-        timestamp=1234567890000,
-        last_update_timestamp=1234567890000,
     )
 
 
@@ -320,3 +304,60 @@ def test_min_fill_percent_configuration(buy_algo_order, swarm_config):
     assert algo_95.should_attach_stop_loss() is False  # 92% < 95%
     assert algo_90.should_attach_stop_loss() is True  # 92% >= 90%
     assert algo_100.should_attach_stop_loss() is False  # 92% < 100%
+
+
+def test_fill_exactly_at_threshold_attaches_stop(buy_algo_order, swarm_config):
+    algo = RandomSwarmAlgo(buy_algo_order, swarm_config, min_fill_percent=Decimal("95"))
+    algo.record_fill(Decimal("0.95"), Decimal("45000"))
+    assert algo.should_attach_stop_loss() is True
+
+
+@pytest.mark.asyncio
+async def test_fill_above_threshold_but_incomplete_is_executing(
+    buy_algo_order, swarm_config
+):
+    algo = RandomSwarmAlgo(buy_algo_order, swarm_config, min_fill_percent=Decimal("95"))
+    async for _ in algo.next_slice(Decimal("45000")):
+        pass
+    algo.record_fill(Decimal("0.97"), Decimal("45000"))
+
+    summary = algo.get_execution_summary()
+    assert summary["status"] == "executing"
+    assert summary["meets_threshold"] is True
+    assert "warning" not in summary
+
+
+@pytest.mark.asyncio
+async def test_over_fill_is_reported_complete(buy_algo_order, swarm_config):
+    algo = RandomSwarmAlgo(buy_algo_order, swarm_config)
+    async for _ in algo.next_slice(Decimal("45000")):
+        pass
+    algo.record_fill(Decimal("1.2"), Decimal("45000"))  # slipped past the parent size
+
+    summary = algo.get_execution_summary()
+    assert summary["status"] == "complete"
+    assert summary["meets_threshold"] is True
+
+
+@pytest.mark.asyncio
+async def test_zero_price_fill_keeps_a_zero_average_not_none(
+    buy_algo_order, swarm_config
+):
+    algo = RandomSwarmAlgo(buy_algo_order, swarm_config)
+    async for _ in algo.next_slice(Decimal("45000")):
+        pass
+    algo.record_fill(Decimal("0.5"), Decimal("0"))
+
+    assert algo.get_weighted_avg_price() == Decimal("0")
+    assert algo.get_execution_summary()["weighted_avg_price"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_child_orders_sum_to_parent(buy_algo_order, swarm_config):
+    algo = RandomSwarmAlgo(buy_algo_order, swarm_config)
+    children = [child async for child in algo.next_slice(Decimal("45000"))]
+
+    assert len(children) == algo.plan.num_orders == 3
+    assert sum(c.amount for c in children) == buy_algo_order.total_amount
+    assert all(c.parent_id == buy_algo_order.id for c in children)
+    assert all(c.side == OrderSide.BUY for c in children)

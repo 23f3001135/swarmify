@@ -1,200 +1,144 @@
-# Swarmify Execution Engine
+# Swarmify
 
-A high-performance, async algorithmic execution library for crypto trading, designed for hedge funds and HFT environments. Built on top of `ccxt` and `asyncio`.
+An async execution engine for crypto venues. Swarmify takes a parent order and
+works it into the market as a stream of child orders — sliced, sized and timed
+to keep a large order from showing up as a single recognisable print. It is a
+library: you import it into a strategy, not a standalone bot.
 
-> **Status**: Production-hardened after comprehensive code review. All critical bugs fixed, timeouts added, metrics instrumented.
+Built on `ccxt`, `asyncio` and Pydantic. All sizes and prices are
+`decimal.Decimal`, so rounding is explicit rather than whatever a float happens
+to do.
 
-## Features
+## Layout
 
-*   **Exchange Abstraction**: Unified interface for Binance and Bybit (extensible to others).
-*   **Algorithmic Execution**: 
-    - **Iceberg**: Classic order slicing with fixed sizes
-    - **Random Swarm** ⭐: Advanced stealth execution using randomness across timing, quantity, and order count
-*   **Risk Management**: Pre-trade risk checks with market order price estimation and value limits.
-*   **Precision**: Uses `decimal.Decimal` for all financial calculations to ensure zero floating-point errors.
-*   **Persistence**: Async SQLite storage with WAL mode for robust order state management and audit trails.
-*   **Type Safety**: Fully typed with `mypy` strict mode and Pydantic models.
-*   **Observability**: Built-in metrics tracking for latency, fill rates, and rejection reasons.
-*   **Production-Ready**: Timeouts on all I/O, graceful shutdown, exception handling, connection pooling.
+```
+swarmify/
+  core/         types and Pydantic models (Order, AlgoOrder, Ticker, ...)
+  algos/        execution algorithms and the swarm planner
+  exchange/     BaseExchange interface and the ccxt adapter
+  execution/    RiskManager (pre-trade checks) and OMS (order lifecycle)
+  persistence/  aiosqlite order store with a parent/child audit trail
+  utils/        in-process metrics
+  client.py     SwarmClient — wires the above together
+```
 
 ## Algorithms
 
-### Random Swarm Order ⭐ NEW: Production-Grade Features
+- **Iceberg** — fixed-size slices; the trailing slice carries the remainder.
+- **Random swarm** — a random number of children, random sizes (each above the
+  venue's size and notional floors) and random gaps between them. The plan is
+  computed up front so it can be inspected before anything is sent; execution
+  then replays it. The algorithm also tracks fills, reports a weighted-average
+  entry, flags under-filled executions and can derive a protective stop from the
+  realised entry.
 
-The **Random Swarm** algorithm uses strategic randomness to maximize stealth when executing large orders:
-
-**Three Dimensions of Randomness:**
-1. **Order Count**: Randomly selects N child orders between `min_child_orders` and `max_child_orders`
-2. **Quantity Split**: Randomly distributes total amount across N orders (respecting exchange minimums)
-3. **Timing**: Random delays between each order (between `min_delay_ms` and `max_delay_ms`)
-
-**Two-Phase Execution:**
-- **Phase 1 (Planning)**: Pre-computes all randomization using optimized standard library operations
-- **Phase 2 (Execution)**: Sequentially places orders according to the plan
-
-**Production Features:**
-- ✅ **Weighted Average Entry Price**: Automatically calculated from all fills for accurate P&L
-- ✅ **Partial Fill Detection**: Warns if fill rate < 95% threshold
-- ✅ **Stop-Loss Attachment**: Automatically generates SL order after swarm completes
-- ✅ **Comprehensive Audit Trail**: Structured logging (SWARM_START, SWARM_PARTS_PREPARED, etc.)
-- ✅ **Fill Tracking**: Records every fill event with price and quantity for analysis
-
-This approach prevents pattern detection and minimizes market impact for institutional-sized orders.
-
-**Documentation**: See [docs/RandomSwarmAlgo.md](docs/RandomSwarmAlgo.md) for detailed usage.
-
-## Installation
-
-This project uses `uv` for dependency management.
+## Install
 
 ```bash
 uv sync
 ```
 
+To use it from another project, add it as a dependency (`uv add swarmify` once
+published, or a path/git reference during development).
+
 ## Usage
 
-Swarmify is designed to be imported as a library into your trading strategy codebase.
-
-### Example: Random Swarm Order with Production Features
+High-level: hand the client a parent order and let it pick and run the
+algorithm. `execute_algo_order` returns the algorithm instance so you can read
+fills, pull a summary, or attach a stop afterwards.
 
 ```python
 import asyncio
 from decimal import Decimal
-from swarmify import SwarmClient, AlgoOrder, OrderSide, RandomSwarmAlgo, SwarmConfig
+
+from swarmify import SwarmClient, OrderSide
+
 
 async def main():
-    async with SwarmClient(
-        api_key="YOUR_KEY", 
-        secret="YOUR_SECRET", 
-        exchange_name="binance",
-        sandbox=True
+    async with SwarmClient.for_exchange(
+        "binance", "KEY", "SECRET", sandbox=True
     ) as client:
-        
-        # Configure swarm with production parameters
-        config = SwarmConfig(
-            min_child_orders=5,
-            max_child_orders=15,
-            min_delay_ms=500,
-            max_delay_ms=3000,
-            min_notional_usd=Decimal("100.0"),
-            min_quantity=Decimal("0.001")
-        )
-        
-        # Create algo order
-        algo_order = AlgoOrder(
-            id="swarm-001",
-            client_order_id="swarm-001",
+        algo = await client.execute_algo_order(
             symbol="BTC/USDT",
             side=OrderSide.BUY,
-            total_amount=Decimal("2.0"),
-            algo_name="random_swarm",
+            amount=Decimal("2.0"),
+            algo="random_swarm",
+            algo_params={
+                "min_child_orders": 5,
+                "max_child_orders": 15,
+                "min_delay_ms": 500,
+                "max_delay_ms": 3000,
+            },
         )
-        
-        # Execute with 95% minimum fill threshold
-        algo = RandomSwarmAlgo(
-            algo_order=algo_order,
-            config=config,
-            min_fill_percent=Decimal("95.0")
-        )
-        
-        # Execute swarm
-        current_price = await client.get_ticker("BTC/USDT")
-        async for child_order in algo.next_slice(current_price.last):
-            await client.oms.submit_order(child_order)
-            # Record fills as they occur
-            # algo.record_fill(filled_qty, fill_price)
-        
-        # Get execution summary
-        summary = algo.get_execution_summary()
-        print(f"Status: {summary['status']}")
-        print(f"Fill Rate: {summary['fill_percent']}")
-        print(f"Weighted Avg Entry: ${summary['weighted_avg_price']}")
-        
-        # Attach stop-loss if conditions met (2% stop)
-        if algo.should_attach_stop_loss():
-            sl_order = algo.get_stop_loss_order(Decimal("2.0"))
-            await client.oms.submit_order(sl_order)
-            print(f"Stop-Loss attached at ${sl_order.price}")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+        summary = algo.get_execution_summary()
+        print(summary["status"], summary["fill_percent"], summary["weighted_avg_price"])
+
+        if algo.should_attach_stop_loss():
+            stop = algo.get_stop_loss_order(Decimal("2.0"))
+            await client.submit_order(stop)
+
+
+asyncio.run(main())
 ```
 
-### Example: Iceberg Order
+Low-level: drive the algorithm yourself and submit each child through the OMS.
 
 ```python
-# Classic iceberg with fixed slice size
-parent_id = await client.execute_algo_order(
-    symbol="BTC/USDT",
-    side="buy",
-    amount=10.0,
-    algo="iceberg",
-    algo_params={"slice_size": 0.5}  # Fixed 0.5 BTC slices
+from swarmify import AlgoOrder, RandomSwarmAlgo, SwarmConfig
+
+parent = AlgoOrder(id="swarm-001", symbol="BTC/USDT", side=OrderSide.BUY,
+                   total_amount=Decimal("2.0"))
+algo = RandomSwarmAlgo(parent, config=SwarmConfig(min_child_orders=5))
+
+price = (await client.get_ticker("BTC/USDT")).last
+async for child in algo.next_slice(price):
+    placed = await client.submit_order(child, reference_price=price)
+    # feed fills back as the exchange reports them:
+    # algo.record_fill(placed.filled, placed.average_price)
+```
+
+Iceberg is the same call with a slice size:
+
+```python
+await client.execute_algo_order(
+    symbol="BTC/USDT", side="buy", amount=Decimal("10"),
+    algo="iceberg", algo_params={"slice_size": "0.5"},
 )
 ```
 
-## Architecture
+A runnable, offline walk-through lives in
+[examples/random_swarm_example.py](examples/random_swarm_example.py).
 
-*   **Client (`swarmify.SwarmClient`)**: The main entry point. Manages the connection and spawns background execution tasks.
-*   **OMS (`swarmify.execution.OMS`)**: Order Management System. Handles state transitions, idempotency, and persistence.
-*   **Risk (`swarmify.execution.RiskManager`)**: The Gatekeeper. Rejects orders that violate safety limits, including market order estimation.
-*   **Algos (`swarmify.algos`)**: 
-    - `IcebergAlgo`: Fixed-size order slicing
-    - `RandomSwarmAlgo`: Strategic randomization for stealth
-*   **Metrics (`swarmify.utils.metrics`)**: Tracks order latency, fill rates, and rejection reasons for observability.
+## Swarm configuration
 
-## Random Swarm Parameters
+| Parameter          | Default | Meaning                                   |
+|--------------------|---------|-------------------------------------------|
+| `min_child_orders` | 2       | Lower bound on the child count            |
+| `max_child_orders` | 10      | Upper bound on the child count            |
+| `min_delay_ms`     | 0       | Minimum gap between children              |
+| `max_delay_ms`     | 1000    | Maximum gap between children              |
+| `min_notional_usd` | 5       | Venue minimum order value                 |
+| `min_quantity`     | 0.001   | Venue minimum order size                  |
+| `seed`             | None    | Fix the RNG for reproducible plans/tests  |
 
-All parameters are **optional** with sensible defaults:
+The planner clamps the child count to what the constraints allow: it never
+produces a child below the size or notional floor, and the children always sum
+to the parent amount exactly.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `min_child_orders` | 2 | Minimum number of child orders |
-| `max_child_orders` | 10 | Maximum number of child orders |
-| `min_delay_ms` | 0 | Minimum delay between orders (ms) |
-| `max_delay_ms` | 1000 | Maximum delay between orders (ms) |
-| `min_notional_usd` | 5.0 | Exchange minimum notional value |
-| `min_quantity` | 0.001 | Exchange minimum quantity |
+## Safety
 
-## Safety Features
-
-1. **Network Timeouts**: All exchange calls have mandatory 10-30s timeouts
-2. **Market Order Protection**: Requires price estimates; rejects if value exceeds limits
-3. **Graceful Shutdown**: Cancels active tasks and prevents orphaned orders
-4. **Audit Trail**: Parent-child order linkage persisted to database
-5. **Idempotency**: UUID-based client order IDs prevent duplicate submissions
-6. **Constraint Validation**: Ensures all orders meet exchange minimums before execution
+- Every `ccxt` call is wrapped in a timeout.
+- The risk manager runs before each child and refuses a market order it cannot
+  price, or any order over the configured notional/quantity limits.
+- Submission is idempotent on `client_order_id`.
+- Parent/child links are persisted, so an execution can be reconstructed.
 
 ## Development
 
-Run tests:
 ```bash
-uv run pytest -v
+uv run pytest          # tests
+uv run ruff check .    # lint
+uv run black .         # format
+uv run mypy            # type check
 ```
-
-Format code:
-```bash
-uvx black src
-uvx ruff check src
-```
-
-Type check:
-```bash
-uv run mypy src --strict
-```
-
-## Testing
-
-15 comprehensive test cases covering:
-- Risk management (limit & market orders)
-- OMS lifecycle (success & rejection paths)
-- Market order safety checks
-- Random Swarm planning and validation
-- Quantity splitting algorithms
-- Constraint enforcement
-
-All tests passing. See [CHANGELOG.md](CHANGELOG.md) for details.
-
-## License
-
-Proprietary & Confidential.

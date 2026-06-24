@@ -1,21 +1,21 @@
-from enum import Enum, auto
+from enum import StrEnum
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     MARKET = "market"
     LIMIT = "limit"
     STOP_MARKET = "stop_market"
     STOP_LIMIT = "stop_limit"
 
 
-class OrderStatus(str, Enum):
-    PENDING = "pending"  # Internal state before sending to exchange
-    OPEN = "open"  # Accepted by exchange
+class OrderStatus(StrEnum):
+    PENDING = "pending"  # internal state before the order reaches the exchange
+    OPEN = "open"  # accepted by the exchange
     FILLED = "filled"
     PARTIALLY_FILLED = "partially_filled"
     CANCELED = "canceled"
@@ -23,7 +23,7 @@ class OrderStatus(str, Enum):
     EXPIRED = "expired"
 
 
-class TimeInForce(str, Enum):
-    GTC = "GTC"  # Good Till Cancelled
-    IOC = "IOC"  # Immediate or Cancel
-    FOK = "FOK"  # Fill or Kill
+class TimeInForce(StrEnum):
+    GTC = "GTC"  # good till cancelled
+    IOC = "IOC"  # immediate or cancel
+    FOK = "FOK"  # fill or kill
